@@ -71,6 +71,14 @@ struct Cli {
     /// Set SKIP_ENV_VALIDATION=1 for child processes (Next.js, tsc, lint, prisma)
     #[arg(long = "skip-env", global = true)]
     skip_env: bool,
+
+    /// Suppress non-fatal advisory output to stderr (hook-not-installed
+    /// warnings, etc). Real errors still print. Intended for embedded
+    /// integrations (e.g. axiomate calling `rtk rewrite` directly) where
+    /// the host agent doesn't use the Claude Code hook pipeline and the
+    /// "no hook installed" notice is noise.
+    #[arg(long, global = true)]
+    quiet: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1387,7 +1395,10 @@ fn run_cli() -> Result<i32> {
 
     // Warn if installed hook is outdated/missing (1/day, non-blocking).
     // Skip for Gain — it shows its own inline hook warning.
-    if !matches!(cli.command, Commands::Gain { .. }) {
+    // Skip when --quiet is set — embedded integrations (axiomate's direct
+    // `rtk rewrite` calls) don't use the hook pipeline so the warning is
+    // misleading there.
+    if !cli.quiet && !matches!(cli.command, Commands::Gain { .. }) {
         hooks::hook_check::maybe_warn();
     }
 
@@ -1911,6 +1922,7 @@ fn run_cli() -> Result<i32> {
                 reset,
                 yes,
                 cli.verbose,
+                cli.quiet,
             )?;
             0
         }

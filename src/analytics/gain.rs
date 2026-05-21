@@ -27,6 +27,7 @@ pub fn run(
     reset: bool,
     yes: bool,
     _verbose: u8,
+    quiet: bool,
 ) -> Result<()> {
     let tracker = Tracker::new().context("Failed to initialize tracking database")?;
     let project_scope = resolve_project_scope(project)?; // added: resolve project path
@@ -121,30 +122,33 @@ pub fn run(
         print_efficiency_meter(summary.avg_savings_pct);
         println!();
 
-        // Warn about hook issues that silently kill savings (stderr, not stdout)
-        match hook_check::status() {
-            hook_check::HookStatus::Missing => {
-                eprintln!(
-                    "{}",
-                    "[warn] No hook installed — run `rtk init -g` for automatic token savings"
-                        .yellow()
-                );
-                eprintln!();
+        // Warn about hook issues that silently kill savings (stderr, not stdout).
+        // Both checks skipped under --quiet for embedded integrations.
+        if !quiet {
+            match hook_check::status() {
+                hook_check::HookStatus::Missing => {
+                    eprintln!(
+                        "{}",
+                        "[warn] No hook installed — run `rtk init -g` for automatic token savings"
+                            .yellow()
+                    );
+                    eprintln!();
+                }
+                hook_check::HookStatus::Outdated => {
+                    eprintln!(
+                        "{}",
+                        "[warn] Hook outdated — run `rtk init -g` to update".yellow()
+                    );
+                    eprintln!();
+                }
+                hook_check::HookStatus::Ok => {}
             }
-            hook_check::HookStatus::Outdated => {
-                eprintln!(
-                    "{}",
-                    "[warn] Hook outdated — run `rtk init -g` to update".yellow()
-                );
-                eprintln!();
-            }
-            hook_check::HookStatus::Ok => {}
-        }
 
-        // Lightweight RTK_DISABLED bypass check (best-effort, silent on failure)
-        if let Some(warning) = check_rtk_disabled_bypass() {
-            eprintln!("{}", warning.yellow());
-            eprintln!();
+            // Lightweight RTK_DISABLED bypass check (best-effort, silent on failure)
+            if let Some(warning) = check_rtk_disabled_bypass() {
+                eprintln!("{}", warning.yellow());
+                eprintln!();
+            }
         }
 
         if !summary.by_command.is_empty() {
