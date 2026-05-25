@@ -25,10 +25,10 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
         .any(|a| (a.starts_with('-') && !a.starts_with("--") && a.contains('a')) || a == "--all");
 
     // Per `man ls`, the long listing is triggered by `-l` and also implied by
-    // `-g`, `-n`, `-o`, and `--full-time`. In any of those cases we preserve
-    // permission info as octal.
+    // `-g`, `-n`, `-o`, `--full-time` or GNU `--format=long` and `--format=verbose`.
+    // In any of those cases we preserve permission info as octal.
     let show_long = args.iter().any(|a| {
-        if a == "--full-time" {
+        if a == "--full-time" || a == "--format=long" || a == "--format=verbose" {
             return true;
         }
         if a.starts_with('-') && !a.starts_with("--") {
