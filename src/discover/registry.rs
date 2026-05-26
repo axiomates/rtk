@@ -464,6 +464,23 @@ pub fn rewrite_command(
     excluded: &[String],
     transparent_prefixes: &[String],
 ) -> Option<String> {
+    rewrite_command_with_diagnostics(cmd, excluded, transparent_prefixes, true)
+}
+
+pub fn rewrite_command_quiet(
+    cmd: &str,
+    excluded: &[String],
+    transparent_prefixes: &[String],
+) -> Option<String> {
+    rewrite_command_with_diagnostics(cmd, excluded, transparent_prefixes, false)
+}
+
+fn rewrite_command_with_diagnostics(
+    cmd: &str,
+    excluded: &[String],
+    transparent_prefixes: &[String],
+    emit_diagnostics: bool,
+) -> Option<String> {
     let trimmed = cmd.trim();
     if trimmed.is_empty() {
         return None;
@@ -488,7 +505,7 @@ pub fn rewrite_command(
         return Some(trimmed.to_string());
     }
 
-    rewrite_compound(trimmed, &compiled, &normalized_prefixes)
+    rewrite_compound(trimmed, &compiled, &normalized_prefixes, emit_diagnostics)
 }
 
 /// Rewrite a compound command (with `&&`, `||`, `;`, `|`) by rewriting each segment.
@@ -496,6 +513,7 @@ fn rewrite_compound(
     cmd: &str,
     excluded: &[ExcludePattern],
     transparent_prefixes: &[String],
+    emit_diagnostics: bool,
 ) -> Option<String> {
     let tokens = tokenize(cmd);
     let mut result = String::with_capacity(cmd.len() + 32);
@@ -509,8 +527,9 @@ fn rewrite_compound(
         match tok.kind {
             TokenKind::Operator => {
                 let seg = cmd[seg_start..tok.offset].trim();
-                let rewritten = rewrite_segment(seg, excluded, transparent_prefixes)
-                    .unwrap_or_else(|| seg.to_string());
+                let rewritten =
+                    rewrite_segment(seg, excluded, transparent_prefixes, emit_diagnostics)
+                        .unwrap_or_else(|| seg.to_string());
                 if rewritten != seg {
                     any_changed = true;
                 }
@@ -540,7 +559,7 @@ fn rewrite_compound(
                 let rewritten = if is_pipe_incompatible {
                     seg.to_string()
                 } else {
-                    rewrite_segment(seg, excluded, transparent_prefixes)
+                    rewrite_segment(seg, excluded, transparent_prefixes, emit_diagnostics)
                         .unwrap_or_else(|| seg.to_string())
                 };
                 if rewritten != seg {
@@ -569,8 +588,9 @@ fn rewrite_compound(
             }
             TokenKind::Shellism if tok.value == "&" => {
                 let seg = cmd[seg_start..tok.offset].trim();
-                let rewritten = rewrite_segment(seg, excluded, transparent_prefixes)
-                    .unwrap_or_else(|| seg.to_string());
+                let rewritten =
+                    rewrite_segment(seg, excluded, transparent_prefixes, emit_diagnostics)
+                        .unwrap_or_else(|| seg.to_string());
                 if rewritten != seg {
                     any_changed = true;
                 }
@@ -586,8 +606,8 @@ fn rewrite_compound(
     }
 
     let seg = cmd[seg_start..].trim();
-    let rewritten =
-        rewrite_segment(seg, excluded, transparent_prefixes).unwrap_or_else(|| seg.to_string());
+    let rewritten = rewrite_segment(seg, excluded, transparent_prefixes, emit_diagnostics)
+        .unwrap_or_else(|| seg.to_string());
     if rewritten != seg {
         any_changed = true;
     }
@@ -686,8 +706,9 @@ fn rewrite_segment(
     seg: &str,
     excluded: &[ExcludePattern],
     transparent_prefixes: &[String],
+    emit_diagnostics: bool,
 ) -> Option<String> {
-    rewrite_segment_inner(seg, excluded, transparent_prefixes, 0)
+    rewrite_segment_inner(seg, excluded, transparent_prefixes, 0, emit_diagnostics)
 }
 
 fn is_excluded(cmd: &str, excluded: &[ExcludePattern]) -> bool {
@@ -702,6 +723,7 @@ fn rewrite_segment_inner(
     excluded: &[ExcludePattern],
     transparent_prefixes: &[String],
     depth: usize,
+    emit_diagnostics: bool,
 ) -> Option<String> {
     let trimmed = seg.trim();
     if trimmed.is_empty() {
@@ -717,14 +739,21 @@ fn rewrite_segment_inner(
         // #345: RTK_DISABLED=1 in env prefix → skip rewrite entirely
         // #508: warn on stderr so agents learn to stop overusing it
         if env_prefix.contains("RTK_DISABLED=") {
-            eprintln!(
-                "[rtk] RTK_DISABLED=1 detected — skipping filter for this command. \
-                 Remove RTK_DISABLED=1 to restore token savings."
-            );
+            if emit_diagnostics {
+                eprintln!(
+                    "[rtk] RTK_DISABLED=1 detected — skipping filter for this command. \
+                     Remove RTK_DISABLED=1 to restore token savings."
+                );
+            }
             return None;
         }
-        let rewritten =
-            rewrite_segment_inner(rest_after_env, excluded, transparent_prefixes, depth + 1)?;
+        let rewritten = rewrite_segment_inner(
+            rest_after_env,
+            excluded,
+            transparent_prefixes,
+            depth + 1,
+            emit_diagnostics,
+        )?;
         return Some(format!("{}{}", env_prefix, rewritten));
     }
 
@@ -733,8 +762,14 @@ fn rewrite_segment_inner(
             if rest.is_empty() {
                 return None;
             }
-            return rewrite_segment_inner(rest, excluded, transparent_prefixes, depth + 1)
-                .map(|rewritten| format!("{} {}", prefix, rewritten));
+            return rewrite_segment_inner(
+                rest,
+                excluded,
+                transparent_prefixes,
+                depth + 1,
+                emit_diagnostics,
+            )
+            .map(|rewritten| format!("{} {}", prefix, rewritten));
         }
     }
 
@@ -745,8 +780,14 @@ fn rewrite_segment_inner(
             if rest.is_empty() {
                 return None;
             }
-            return rewrite_segment_inner(rest, excluded, transparent_prefixes, depth + 1)
-                .map(|rewritten| format!("{} {}", prefix, rewritten));
+            return rewrite_segment_inner(
+                rest,
+                excluded,
+                transparent_prefixes,
+                depth + 1,
+                emit_diagnostics,
+            )
+            .map(|rewritten| format!("{} {}", prefix, rewritten));
         }
     }
 
@@ -1583,6 +1624,45 @@ mod tests {
         assert!(
             stderr.contains("RTK_DISABLED=1 detected"),
             "Should warn on stderr, got: {}",
+            stderr
+        );
+    }
+
+    #[test]
+    fn test_rewrite_rtk_disabled_subprocess_quiet_suppresses_warning() {
+        let rtk_bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("debug")
+            .join("rtk");
+        if !rtk_bin.exists() {
+            return;
+        }
+        let rtk_mtime = std::fs::metadata(&rtk_bin)
+            .ok()
+            .and_then(|m| m.modified().ok());
+        let test_mtime = std::env::current_exe()
+            .ok()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| m.modified().ok());
+        if let (Some(rtk_t), Some(test_t)) = (rtk_mtime, test_mtime) {
+            if rtk_t < test_t {
+                return;
+            }
+        }
+
+        let output = std::process::Command::new(&rtk_bin)
+            .args(["--quiet", "rewrite", "RTK_DISABLED=1 git status"])
+            .output()
+            .expect("Failed to run rtk");
+
+        assert!(
+            !output.status.success(),
+            "Should exit non-zero (no rewrite)"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.trim().is_empty(),
+            "Quiet rewrite should not warn on stderr, got: {}",
             stderr
         );
     }

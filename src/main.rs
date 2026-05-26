@@ -2224,7 +2224,7 @@ fn run_cli() -> Result<i32> {
 
         Commands::Rewrite { args } => {
             let cmd = args.join(" ");
-            hooks::rewrite_cmd::run(&cmd)?;
+            hooks::rewrite_cmd::run(&cmd, cli.quiet)?;
             0
         }
 
