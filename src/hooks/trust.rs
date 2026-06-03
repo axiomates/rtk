@@ -105,7 +105,7 @@ pub fn check_trust(filter_path: &Path) -> Result<TrustStatus> {
         if in_ci {
             return Ok(TrustStatus::EnvOverride);
         }
-        eprintln!(
+        crate::advisory_eprintln!(
             "[rtk] WARNING: RTK_TRUST_PROJECT_FILTERS=1 ignored (CI environment not detected)"
         );
     }
@@ -114,7 +114,7 @@ pub fn check_trust(filter_path: &Path) -> Result<TrustStatus> {
     let store = match read_store() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!(
+            crate::advisory_eprintln!(
                 "[rtk] WARNING: trust store unreadable ({}), treating all filters as untrusted",
                 e
             );

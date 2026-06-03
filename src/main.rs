@@ -1332,29 +1332,6 @@ fn merge_pnpm_args_os(filters: &[String], args: &[OsString]) -> Vec<OsString> {
         .collect()
 }
 
-/// Validate that pnpm filters are only used in the global context, not before subcommands like tsc.
-fn validate_pnpm_filters(filters: &[String], command: &PnpmCommands) -> Option<String> {
-    // Check if this is a Build or Typecheck command with filters
-    match command {
-        PnpmCommands::Typecheck { .. } => {
-            // FIXME: if filters are present, we should find out which workspaces are selected before running rtk dedicated commands
-            if !filters.is_empty() {
-                let cmd_name = match command {
-                    PnpmCommands::Typecheck { .. } => "tsc",
-                    _ => unreachable!(),
-                };
-                let msg = format!(
-                    "[rtk] warning: --filter is not yet supported for pnpm {}, filters preceding the subcommand will be ignored",
-                    cmd_name
-                );
-                return Some(msg);
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
 fn main() {
     let code = match run_cli() {
         Ok(code) => code,
@@ -1402,18 +1379,10 @@ fn run_cli() -> Result<i32> {
         }
     };
 
-    // Warn if installed hook is outdated/missing (1/day, non-blocking).
-    // Skip for Gain — it shows its own inline hook warning.
-    if !matches!(cli.command, Commands::Gain { .. }) {
-        hooks::hook_check::maybe_warn();
-    }
-
-    // Runtime integrity check for operational commands.
-    // Meta commands (init, gain, verify, config, etc.) skip the check
-    // because they don't go through the hook pipeline.
-    if is_operational_command(&cli.command) {
-        hooks::integrity::runtime_check()?;
-    }
+    // Axiomate embeds RTK directly as a compact-output command. This branch
+    // does not use the Claude hook pipeline, so hook installation/integrity
+    // state is not relevant to command execution and must not leak as stderr
+    // advisory noise.
 
     let code = match cli.command {
         Commands::Ls { args } => ls::run(&args, cli.verbose)?,
@@ -1619,34 +1588,39 @@ fn run_cli() -> Result<i32> {
 
         Commands::Psql { args } => psql_cmd::run(&args, cli.verbose)?,
 
-        Commands::Pnpm { filter, command } => {
-            // Warns user if filters are used with unsupported subcommands like typecheck
-            if let Some(warning) = validate_pnpm_filters(&filter, &command) {
-                eprintln!("{}", warning);
-            }
-
-            match command {
-                PnpmCommands::List { depth, args } => pnpm_cmd::run(
-                    pnpm_cmd::PnpmCommand::List { depth },
-                    &merge_pnpm_args(&filter, &args),
-                    cli.verbose,
-                )?,
-                PnpmCommands::Outdated { args } => pnpm_cmd::run(
-                    pnpm_cmd::PnpmCommand::Outdated,
-                    &merge_pnpm_args(&filter, &args),
-                    cli.verbose,
-                )?,
-                PnpmCommands::Install { args } => pnpm_cmd::run(
-                    pnpm_cmd::PnpmCommand::Install,
-                    &merge_pnpm_args(&filter, &args),
-                    cli.verbose,
-                )?,
-                PnpmCommands::Typecheck { args } => tsc_cmd::run(&args, cli.verbose)?,
-                PnpmCommands::Other(args) => {
-                    pnpm_cmd::run_passthrough(&merge_pnpm_args_os(&filter, &args), cli.verbose)?
+        Commands::Pnpm { filter, command } => match command {
+            PnpmCommands::List { depth, args } => pnpm_cmd::run(
+                pnpm_cmd::PnpmCommand::List { depth },
+                &merge_pnpm_args(&filter, &args),
+                cli.verbose,
+            )?,
+            PnpmCommands::Outdated { args } => pnpm_cmd::run(
+                pnpm_cmd::PnpmCommand::Outdated,
+                &merge_pnpm_args(&filter, &args),
+                cli.verbose,
+            )?,
+            PnpmCommands::Install { args } => pnpm_cmd::run(
+                pnpm_cmd::PnpmCommand::Install,
+                &merge_pnpm_args(&filter, &args),
+                cli.verbose,
+            )?,
+            PnpmCommands::Typecheck { args } => {
+                if filter.is_empty() {
+                    tsc_cmd::run(&args, cli.verbose)?
+                } else {
+                    let passthrough_args = std::iter::once(OsString::from("typecheck"))
+                        .chain(args.into_iter().map(OsString::from))
+                        .collect::<Vec<_>>();
+                    pnpm_cmd::run_passthrough(
+                        &merge_pnpm_args_os(&filter, &passthrough_args),
+                        cli.verbose,
+                    )?
                 }
             }
-        }
+            PnpmCommands::Other(args) => {
+                pnpm_cmd::run_passthrough(&merge_pnpm_args_os(&filter, &args), cli.verbose)?
+            }
+        },
 
         Commands::Err { command } => {
             let cmd = command.join(" ");
@@ -2454,64 +2428,6 @@ fn run_cli() -> Result<i32> {
     Ok(code)
 }
 
-/// Returns true for commands that are invoked via the hook pipeline
-/// (i.e., commands that process rewritten shell commands).
-/// Meta commands (init, gain, verify, etc.) are excluded because
-/// they are run directly by the user, not through the hook.
-/// Returns true for commands that go through the hook pipeline
-/// and therefore require integrity verification.
-///
-/// SECURITY: whitelist pattern — new commands are NOT integrity-checked
-/// until explicitly added here. A forgotten command fails open (no check)
-/// rather than creating false confidence about what's protected.
-fn is_operational_command(cmd: &Commands) -> bool {
-    matches!(
-        cmd,
-        Commands::Ls { .. }
-            | Commands::Tree { .. }
-            | Commands::Read { .. }
-            | Commands::Smart { .. }
-            | Commands::Git { .. }
-            | Commands::Gh { .. }
-            | Commands::Glab { .. }
-            | Commands::Pnpm { .. }
-            | Commands::Err { .. }
-            | Commands::Test { .. }
-            | Commands::Json { .. }
-            | Commands::Deps { .. }
-            | Commands::Env { .. }
-            | Commands::Find { .. }
-            | Commands::Diff { .. }
-            | Commands::Log { .. }
-            | Commands::Dotnet { .. }
-            | Commands::Docker { .. }
-            | Commands::Kubectl { .. }
-            | Commands::Summary { .. }
-            | Commands::Grep { .. }
-            | Commands::Wget { .. }
-            | Commands::Vitest { .. }
-            | Commands::Prisma { .. }
-            | Commands::Tsc { .. }
-            | Commands::Next { .. }
-            | Commands::Lint { .. }
-            | Commands::Prettier { .. }
-            | Commands::Playwright { .. }
-            | Commands::Cargo { .. }
-            | Commands::Npm { .. }
-            | Commands::Npx { .. }
-            | Commands::Curl { .. }
-            | Commands::Ruff { .. }
-            | Commands::Pytest { .. }
-            | Commands::Rake { .. }
-            | Commands::Rubocop { .. }
-            | Commands::Rspec { .. }
-            | Commands::Pip { .. }
-            | Commands::Go { .. }
-            | Commands::GolangciLint { .. }
-            | Commands::Gt { .. }
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3117,10 +3033,13 @@ mod tests {
         .unwrap();
         match cli.command {
             Commands::Pnpm { filter, command } => {
-                let warning = validate_pnpm_filters(&filter, &command);
-
                 assert!(filter.is_empty());
-                assert!(warning.is_none())
+                match command {
+                    PnpmCommands::Typecheck { args } => {
+                        assert_eq!(args, vec!["--filter", "@app3", "--filter", "@app4"]);
+                    }
+                    _ => panic!("Expected Pnpm Typecheck command"),
+                }
             }
             _ => panic!("Expected Pnpm Build command"),
         }
@@ -3144,10 +3063,27 @@ mod tests {
         .unwrap();
         match cli.command {
             Commands::Pnpm { filter, command } => {
-                let warning = validate_pnpm_filters(&filter, &command).unwrap();
-
                 assert_eq!(filter, vec!["@app1", "@app2"]);
-                assert_eq!(warning, "[rtk] warning: --filter is not yet supported for pnpm tsc, filters preceding the subcommand will be ignored")
+                match command {
+                    PnpmCommands::Typecheck { args } => {
+                        let passthrough_args = std::iter::once(OsString::from("typecheck"))
+                            .chain(args.into_iter().map(OsString::from))
+                            .collect::<Vec<_>>();
+                        assert_eq!(
+                            merge_pnpm_args_os(&filter, &passthrough_args),
+                            vec![
+                                OsString::from("--filter=@app1"),
+                                OsString::from("--filter=@app2"),
+                                OsString::from("typecheck"),
+                                OsString::from("--filter"),
+                                OsString::from("@app3"),
+                                OsString::from("--filter"),
+                                OsString::from("@app4"),
+                            ]
+                        );
+                    }
+                    _ => panic!("Expected Pnpm Typecheck command"),
+                }
             }
             _ => panic!("Expected Pnpm Build command"),
         }

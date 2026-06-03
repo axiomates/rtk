@@ -124,12 +124,12 @@ pub fn truncate_output(output: &str, max_chars: usize) -> String {
 
 /// Helper to emit degradation warning
 pub fn emit_degradation_warning(tool: &str, reason: &str) {
-    eprintln!("[RTK:DEGRADED] {} parser: {}", tool, reason);
+    crate::advisory_eprintln!("[RTK:DEGRADED] {} parser: {}", tool, reason);
 }
 
 /// Helper to emit passthrough warning
 pub fn emit_passthrough_warning(tool: &str, reason: &str) {
-    eprintln!("[RTK:PASSTHROUGH] {} parser: {}", tool, reason);
+    crate::advisory_eprintln!("[RTK:PASSTHROUGH] {} parser: {}", tool, reason);
 }
 
 /// Extract a complete JSON object from input that may have non-JSON prefix (pnpm banner, dotenv messages, etc.)

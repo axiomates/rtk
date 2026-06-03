@@ -276,6 +276,7 @@ pub fn run_verify(verbose: u8) -> Result<()> {
 ///
 /// No env-var bypass is provided — if the hook is legitimately modified,
 /// re-run `rtk init -g --auto-patch` to re-establish the baseline.
+#[allow(dead_code)]
 pub fn runtime_check() -> Result<()> {
     let hook_path = resolve_hook_path()?;
 

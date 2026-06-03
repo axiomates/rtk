@@ -643,10 +643,6 @@ fn compile_exclude_patterns(patterns: &[String]) -> Vec<ExcludePattern> {
         .filter_map(|pattern| {
             let trimmed = pattern.trim();
             if trimmed.is_empty() || trimmed == "^" {
-                eprintln!(
-                    "rtk: warning: ignoring trivial exclude_commands pattern '{}'",
-                    pattern
-                );
                 return None;
             }
             let anchored = if trimmed.starts_with('^') {
@@ -656,13 +652,7 @@ fn compile_exclude_patterns(patterns: &[String]) -> Vec<ExcludePattern> {
             };
             Some(match Regex::new(&anchored) {
                 Ok(re) => ExcludePattern::Regex(re),
-                Err(e) => {
-                    eprintln!(
-                        "rtk: warning: invalid exclude_commands pattern '{}': {}",
-                        pattern, e
-                    );
-                    ExcludePattern::Prefix(trimmed.to_string())
-                }
+                Err(_) => ExcludePattern::Prefix(trimmed.to_string()),
             })
         })
         .collect()
@@ -715,12 +705,9 @@ fn rewrite_segment_inner(
     let (env_prefix, rest_after_env) = strip_disabled_prefix(trimmed);
     if !env_prefix.is_empty() {
         // #345: RTK_DISABLED=1 in env prefix → skip rewrite entirely
-        // #508: warn on stderr so agents learn to stop overusing it
+        // Axiomate treats rewrite as a quiet service endpoint, so do not emit
+        // advisory stderr when skipping.
         if env_prefix.contains("RTK_DISABLED=") {
-            eprintln!(
-                "[rtk] RTK_DISABLED=1 detected — skipping filter for this command. \
-                 Remove RTK_DISABLED=1 to restore token savings."
-            );
             return None;
         }
         let rewritten =
@@ -1541,7 +1528,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rewrite_rtk_disabled_warns_on_stderr() {
+    fn test_rewrite_rtk_disabled_returns_none_without_stderr_contract() {
         assert_eq!(
             rewrite_command_no_prefixes("RTK_DISABLED=1 git status", &[]),
             None
@@ -1549,7 +1536,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rewrite_rtk_disabled_subprocess_warns() {
+    fn test_rewrite_rtk_disabled_subprocess_is_silent() {
         let rtk_bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("debug")
@@ -1581,8 +1568,8 @@ mod tests {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("RTK_DISABLED=1 detected"),
-            "Should warn on stderr, got: {}",
+            stderr.trim().is_empty(),
+            "Axiomate rewrite service should not emit advisory stderr, got: {}",
             stderr
         );
     }

@@ -45,6 +45,7 @@ claudedocs
 # Vitals provenance data
 .vitals/
 .worktrees/
+.branch-backups/
 
 # icm 
 .fastembed_cache/

@@ -8,6 +8,7 @@ use crate::core::constants::RTK_DATA_DIR;
 use std::path::PathBuf;
 
 const CURRENT_HOOK_VERSION: u8 = 3;
+#[allow(dead_code)]
 const WARN_INTERVAL_SECS: u64 = 24 * 3600;
 
 /// Hook status for diagnostics and `rtk gain`.
@@ -87,12 +88,14 @@ fn binary_hook_registered(claude_dir: &std::path::Path) -> bool {
 }
 
 /// Check if the installed hook is missing or outdated, warn once per day.
+#[allow(dead_code)]
 pub fn maybe_warn() {
     // Don't block startup — fail silently on any error
     let _ = check_and_warn();
 }
 
 /// Single source of truth: delegates to `status()` then rate-limits the warning.
+#[allow(dead_code)]
 fn check_and_warn() -> Option<()> {
     let warning = match status() {
         HookStatus::Ok => return Some(()),
@@ -146,6 +149,7 @@ fn hook_installed_path() -> Option<PathBuf> {
     }
 }
 
+#[allow(dead_code)]
 fn warn_marker_path() -> Option<PathBuf> {
     let data_dir = dirs::data_local_dir()?.join(RTK_DATA_DIR);
     Some(data_dir.join(".hook_warn_last"))

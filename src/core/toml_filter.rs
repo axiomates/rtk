@@ -200,17 +200,27 @@ impl TomlFilterRegistry {
                     if let Ok(content) = std::fs::read_to_string(project_filter_path) {
                         match Self::parse_and_compile(&content, "project") {
                             Ok(f) => filters.extend(f),
-                            Err(e) => eprintln!("[rtk] warning: .rtk/filters.toml: {}", e),
+                            Err(e) => {
+                                crate::advisory_eprintln!("[rtk] warning: .rtk/filters.toml: {}", e)
+                            }
                         }
                     }
                 }
                 crate::hooks::trust::TrustStatus::Untrusted => {
-                    eprintln!("[rtk] WARNING: untrusted project filters (.rtk/filters.toml)");
-                    eprintln!("[rtk] Filters NOT applied. Run `rtk trust` to review and enable.");
+                    crate::advisory_eprintln!(
+                        "[rtk] WARNING: untrusted project filters (.rtk/filters.toml)"
+                    );
+                    crate::advisory_eprintln!(
+                        "[rtk] Filters NOT applied. Run `rtk trust` to review and enable."
+                    );
                 }
                 crate::hooks::trust::TrustStatus::ContentChanged { .. } => {
-                    eprintln!("[rtk] WARNING: .rtk/filters.toml changed since trusted.");
-                    eprintln!("[rtk] Filters NOT applied. Run `rtk trust` to re-review.");
+                    crate::advisory_eprintln!(
+                        "[rtk] WARNING: .rtk/filters.toml changed since trusted."
+                    );
+                    crate::advisory_eprintln!(
+                        "[rtk] Filters NOT applied. Run `rtk trust` to re-review."
+                    );
                 }
             }
         }
@@ -221,7 +231,9 @@ impl TomlFilterRegistry {
             if let Ok(content) = std::fs::read_to_string(&global_path) {
                 match Self::parse_and_compile(&content, "user-global") {
                     Ok(f) => filters.extend(f),
-                    Err(e) => eprintln!("[rtk] warning: {}: {}", global_path.display(), e),
+                    Err(e) => {
+                        crate::advisory_eprintln!("[rtk] warning: {}: {}", global_path.display(), e)
+                    }
                 }
             }
         }
@@ -230,7 +242,7 @@ impl TomlFilterRegistry {
         let builtin = BUILTIN_TOML;
         match Self::parse_and_compile(builtin, "builtin") {
             Ok(f) => filters.extend(f),
-            Err(e) => eprintln!("[rtk] warning: builtin filters: {}", e),
+            Err(e) => crate::advisory_eprintln!("[rtk] warning: builtin filters: {}", e),
         }
 
         TomlFilterRegistry { filters }
@@ -251,7 +263,12 @@ impl TomlFilterRegistry {
         for (name, def) in file.filters {
             match compile_filter(name.clone(), def) {
                 Ok(f) => compiled.push(f),
-                Err(e) => eprintln!("[rtk] warning: filter '{}' in {}: {}", name, source, e),
+                Err(e) => crate::advisory_eprintln!(
+                    "[rtk] warning: filter '{}' in {}: {}",
+                    name,
+                    source,
+                    e
+                ),
             }
         }
         Ok(compiled)
@@ -326,10 +343,11 @@ fn compile_filter(name: String, def: TomlFilterDef) -> Result<CompiledFilter, St
     // will never activate (Clap routes before run_fallback). Warn the author.
     for cmd in RUST_HANDLED_COMMANDS {
         if match_regex.is_match(cmd) {
-            eprintln!(
+            crate::advisory_eprintln!(
                 "[rtk] warning: filter '{}' match_command matches '{}' which is already \
                  handled by a Rust module — this filter will never activate for that command",
-                name, cmd
+                name,
+                cmd
             );
             break;
         }
@@ -575,7 +593,9 @@ pub fn run_filter_tests(filter_name_opt: Option<&str>) -> VerifyResults {
                 }
             }
             _ => {
-                eprintln!("[rtk] WARNING: untrusted project filters skipped in verify");
+                crate::advisory_eprintln!(
+                    "[rtk] WARNING: untrusted project filters skipped in verify"
+                );
             }
         }
     }
@@ -605,7 +625,7 @@ fn collect_test_outcomes(
     let file: TomlFilterFile = match toml::from_str(content) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("[rtk] warning: TOML parse error during verify: {}", e);
+            crate::advisory_eprintln!("[rtk] warning: TOML parse error during verify: {}", e);
             return;
         }
     };
@@ -618,7 +638,11 @@ fn collect_test_outcomes(
             Ok(f) => {
                 compiled_filters.insert(name, f);
             }
-            Err(e) => eprintln!("[rtk] warning: filter '{}' compilation error: {}", name, e),
+            Err(e) => crate::advisory_eprintln!(
+                "[rtk] warning: filter '{}' compilation error: {}",
+                name,
+                e
+            ),
         }
     }
 
@@ -635,7 +659,7 @@ fn collect_test_outcomes(
         let compiled = match compiled_filters.get(&filter_name) {
             Some(f) => f,
             None => {
-                eprintln!(
+                crate::advisory_eprintln!(
                     "[rtk] warning: [[tests.{}]] references unknown filter",
                     filter_name
                 );
