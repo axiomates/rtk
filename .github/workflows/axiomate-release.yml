@@ -1,11 +1,10 @@
 name: Axiomate Release
 
-# Triggered by pushing tags shaped `axiomate-v<major>.<minor>.<patch>+<respin>`
-# (e.g. axiomate-v0.40.0+1). The guard job verifies that the tag follows this
-# exact cache-sortable shape and that the tagged commit is contained in the
-# `axiomate` branch before any build starts. Produces the 5-platform binary
-# matrix that axiomate consumes at bootstrap/package time via
-# rtk-axiomate/scripts/fetch.mjs, which resolves GitHub's latest release.
+# Triggered by pushing the `axiomate` branch. The guard job creates a release
+# tag shaped `axiomate-v<crate-version>+<run_number>` for that exact commit,
+# then the build matrix uploads the binaries that axiomate consumes at
+# bootstrap/package time via rtk-axiomate/scripts/fetch.mjs, which resolves
+# GitHub's latest release.
 #
 # Deliberately minimal compared to upstream release.yml: no DEB/RPM, no
 # Discord, no Homebrew tap push, no telemetry secrets. Uses the default
@@ -13,13 +12,13 @@ name: Axiomate Release
 
 on:
   push:
-    tags:
-      - 'axiomate-v*'
+    branches:
+      - axiomate
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release, e.g. axiomate-v0.40.0+1 (must already exist on the axiomate branch)'
-        required: true
+        description: 'Optional existing tag to release, e.g. axiomate-v0.40.0+1'
+        required: false
 
 permissions:
   contents: write
@@ -29,39 +28,70 @@ env:
 
 jobs:
   guard:
-    name: Verify axiomate tag
+    name: Resolve axiomate release tag
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.name }}
+      target_sha: ${{ steps.tag.outputs.target_sha }}
     steps:
-      - name: Checkout tag
+      - name: Checkout axiomate branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'push' && github.sha || 'axiomate' }}
           fetch-depth: 0
 
-      - name: Resolve tag
+      - name: Resolve release tag
         id: tag
         run: |
-          TAG="${{ inputs.tag }}"
-          if [ -z "$TAG" ]; then
-            TAG="${GITHUB_REF#refs/tags/}"
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -n "$TAG" ]; then
+            TARGET_SHA="$(git rev-list -n 1 "$TAG")"
+          else
+            VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+            if [ -z "$VERSION" ]; then
+              echo "::error::Could not read crate version from Cargo.toml"
+              exit 1
+            fi
+            TAG="axiomate-v${VERSION}+${GITHUB_RUN_NUMBER}"
+            TARGET_SHA="$(git rev-parse HEAD)"
           fi
+
           if [[ ! "$TAG" =~ ^axiomate-v[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+$ ]]; then
             echo "::error::Axiomate release tags must match axiomate-v<major>.<minor>.<patch>+<respin>; got '$TAG'"
             exit 1
           fi
-          echo "name=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Verify tag is on axiomate branch
+          echo "name=$TAG" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Verify target is on axiomate branch
         run: |
           TAG="${{ steps.tag.outputs.name }}"
+          TARGET_SHA="${{ steps.tag.outputs.target_sha }}"
           git fetch origin +refs/heads/axiomate:refs/remotes/origin/axiomate
-          TARGET_SHA="$(git rev-list -n 1 "$TAG")"
           if ! git merge-base --is-ancestor "$TARGET_SHA" origin/axiomate; then
             echo "::error::Tag '$TAG' ($TARGET_SHA) is not contained in origin/axiomate"
             exit 1
           fi
+
+      - name: Create generated tag
+        if: steps.tag.outputs.name != github.event.inputs.tag
+        run: |
+          TAG="${{ steps.tag.outputs.name }}"
+          TARGET_SHA="${{ steps.tag.outputs.target_sha }}"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            EXISTING_SHA="$(git rev-list -n 1 "$TAG")"
+            if [ "$EXISTING_SHA" != "$TARGET_SHA" ]; then
+              echo "::error::Tag '$TAG' already points to $EXISTING_SHA, not $TARGET_SHA"
+              exit 1
+            fi
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG" "$TARGET_SHA"
+          git push origin "refs/tags/$TAG"
 
   build:
     name: Build ${{ matrix.target }}
