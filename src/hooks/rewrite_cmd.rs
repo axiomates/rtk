@@ -19,7 +19,7 @@ pub fn run(cmd: &str) -> anyhow::Result<()> {
         .map(|c| (c.hooks.exclude_commands, c.hooks.transparent_prefixes))
         .unwrap_or_default();
 
-    match registry::rewrite_command(cmd, &excluded, &transparent_prefixes) {
+    match rewrite_for_axiomate(cmd, &excluded, &transparent_prefixes) {
         Some(rewritten) => {
             print!("{}", rewritten);
             let _ = std::io::stdout().flush();
@@ -30,6 +30,18 @@ pub fn run(cmd: &str) -> anyhow::Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+fn rewrite_for_axiomate(
+    cmd: &str,
+    excluded: &[String],
+    transparent_prefixes: &[String],
+) -> Option<String> {
+    if crate::discover::lexer::contains_unattestable_construct(cmd) {
+        return None;
+    }
+
+    registry::rewrite_command(cmd, excluded, transparent_prefixes)
 }
 
 #[cfg(test)]
@@ -61,8 +73,54 @@ mod tests {
     #[test]
     fn test_axiomate_rewrite_default_permission_is_rewrite() {
         assert_eq!(
-            registry::rewrite_command("git status", &[], &[]),
+            rewrite_for_axiomate("git status", &[], &[]),
             Some("rtk git status".into())
         );
+    }
+
+    mod unattestable_passthrough {
+        use super::rewrite_for_axiomate;
+
+        #[test]
+        fn test_backtick_substitution_passthrough() {
+            assert_eq!(
+                rewrite_for_axiomate("git status `rm -rf /tmp/x`", &[], &[]),
+                None
+            );
+        }
+
+        #[test]
+        fn test_dollar_substitution_passthrough() {
+            assert_eq!(
+                rewrite_for_axiomate("git status $(rm -rf /tmp/x)", &[], &[]),
+                None
+            );
+        }
+
+        #[test]
+        fn test_double_quoted_substitution_passthrough() {
+            assert_eq!(
+                rewrite_for_axiomate("git log --pretty=\"$(rm -rf /tmp/x)\"", &[], &[]),
+                None
+            );
+        }
+
+        #[test]
+        fn test_file_redirect_passthrough() {
+            assert_eq!(
+                rewrite_for_axiomate("git log > /tmp/out.txt", &[], &[]),
+                None
+            );
+        }
+
+        #[test]
+        fn test_fd_dup_redirect_still_rewrites() {
+            assert!(rewrite_for_axiomate("git status 2>&1", &[], &[]).is_some());
+        }
+
+        #[test]
+        fn test_plain_command_still_rewrites() {
+            assert!(rewrite_for_axiomate("git status", &[], &[]).is_some());
+        }
     }
 }
